@@ -118,6 +118,32 @@ predict_image = lib.network_predict_image
 predict_image.argtypes = [c_void_p, IMAGE]
 predict_image.restype = POINTER(c_float)
 
+
+
+
+def convertBack(x, y, w, h):
+    xmin = int(round(x - (w / 2)))
+    xmax = int(round(x + (w / 2)))
+    ymin = int(round(y - (h / 2)))
+    ymax = int(round(y + (h / 2)))
+    return xmin, ymin, xmax, ymax
+
+def nparray_to_image(img):
+
+    data = img.ctypes.data_as(POINTER(c_ubyte))
+    image = ndarray_image(data, img.ctypes.shape, img.ctypes.strides)
+
+    return image
+
+def array_to_image(arr):
+    # need to return old values to avoid python freeing memory
+    arr = arr.transpose(2,0,1)
+    c, h, w = arr.shape[0:3]
+    arr = np.ascontiguousarray(arr.flat, dtype=np.float32) / 255.0
+    data = arr.ctypes.data_as(POINTER(c_float))
+    im = IMAGE(w,h,c,data)
+    return im, arr
+
 def classify(net, meta, im):
     out = predict_image(net, im)
     res = []
@@ -148,18 +174,25 @@ def detect(net, meta, image, thresh=.5, hier_thresh=.5, nms=.45):
     
 
 def detect_im(net, meta, im, thresh=.5, hier_thresh=.5, nms=.45):
-    boxes = make_boxes(net)
-    probs = make_probs(net)
-    num = num_boxes(net)
-    network_detect(net, im, thresh, hier_thresh, nms, boxes, probs)
+    # im = load_image(image, 0, 0)
+    im, image = array_to_image(image)
+    rgbgr_image(im)
+    num = c_int(0)
+    pnum = pointer(num)
+    predict_image(net, im)
+    dets = get_network_boxes(net, im.w, im.h, thresh, hier_thresh, None, 0, pnum)
+    num = pnum[0]
+    if (nms): do_nms_obj(dets, num, meta.classes, nms);
+
     res = []
     for j in range(num):
         for i in range(meta.classes):
-            if probs[j][i] > 0:
-                res.append((meta.names[i], probs[j][i], (boxes[j].x, boxes[j].y, boxes[j].w, boxes[j].h)))
+            if dets[j].prob[i] > 0:
+                b = dets[j].bbox
+                res.append((meta.names[i], dets[j].prob[i], (b.x, b.y, b.w, b.h)))
     res = sorted(res, key=lambda x: -x[1])
     free_image(im)
-    free_ptrs(cast(probs, POINTER(c_void_p)), num)
+    free_detections(dets, num)
     return res
 
 
@@ -185,20 +218,6 @@ def detect_np(net, meta, np_img, thresh=.5, hier_thresh=.5, nms=.45):
     return res
 
 
-def nparray_to_image(img):
-
-    data = img.ctypes.data_as(POINTER(c_ubyte))
-    image = ndarray_image(data, img.ctypes.shape, img.ctypes.strides)
-
-    return image
-
-
-def convertBack(x, y, w, h):
-    xmin = int(round(x - (w / 2)))
-    xmax = int(round(x + (w / 2)))
-    ymin = int(round(y - (h / 2)))
-    ymax = int(round(y + (h / 2)))
-    return xmin, ymin, xmax, ymax
         
 if __name__ == "__main__":
     #net = load_net("cfg/densenet201.cfg", "/home/pjreddie/trained/densenet201.weights", 0)
